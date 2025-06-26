@@ -256,9 +256,10 @@ void INY() {cpu.y++;SET_N(cpu.y);SET_Z(cpu.y);}
 void JMP() {cpu.pc = addr;}
 void JSR() { // Not accurate, real 6502 push PC-1 bc CPU will increase PC after RTS
     uint16_t next_pc = cpu.pc - 1;
-    cpu.write(0x100+cpu.sp, next_pc>>8);
-    cpu.write(0x100+(cpu.sp-1), next_pc & 0xFF);
     cpu.sp -= 2;
+    cpu.write(0x100+(uint8_t)(cpu.sp+1), next_pc>>8);
+    cpu.write(0x100+cpu.sp, next_pc & 0xFF);
+
     cpu.pc = addr;
 }
 void LDA() {
@@ -298,15 +299,15 @@ void ORA() {
     else          cpu.a |= cpu.read(addr);
     SET_N(cpu.a);SET_Z(cpu.a);
 }
-void PHA() {cpu.write(0x100+cpu.sp, cpu.a);cpu.sp--;}
-void PHP() {uint8_t old_b = cpu.flags.B;cpu.flags.B=1;cpu.write(0x100+cpu.sp, *(uint8_t*)&cpu.flags);cpu.flags.B = old_b;cpu.sp--;}
-void PHX() {cpu.write(0x100+cpu.sp, cpu.x);cpu.sp--;}
-void PHY() {cpu.write(0x100+cpu.sp, cpu.y);cpu.sp--;}
+void PHA() {cpu.write(0x100+(uint8_t)(cpu.sp-1), cpu.a);cpu.sp--;}
+void PHP() {uint8_t old_b = cpu.flags.B;cpu.flags.B=1;cpu.write(0x100+(uint8_t)(cpu.sp-1), *(uint8_t*)&cpu.flags);cpu.flags.B = old_b;cpu.sp--;}
+void PHX() {cpu.write(0x100+(uint8_t)(cpu.sp-1), cpu.x);cpu.sp--;}
+void PHY() {cpu.write(0x100+(uint8_t)(cpu.sp-1), cpu.y);cpu.sp--;}
 
-void PLA() {cpu.sp++;cpu.a = cpu.read(0x100+cpu.sp); SET_N(cpu.a);SET_Z(cpu.a);}
-void PLP() {cpu.sp++;*(uint8_t*)&cpu.flags = cpu.read(0x100+cpu.sp);}
-void PLX() {cpu.sp++;cpu.x = cpu.read(0x100+cpu.sp); SET_N(cpu.x);SET_Z(cpu.x);}
-void PLY() {cpu.sp++;cpu.y = cpu.read(0x100+cpu.sp); SET_N(cpu.y);SET_Z(cpu.y);}
+void PLA() {cpu.a = cpu.read(0x100+cpu.sp); cpu.sp++;SET_N(cpu.a);SET_Z(cpu.a);}
+void PLP() {*(uint8_t*)&cpu.flags = cpu.read(0x100+cpu.sp); cpu.sp++;}
+void PLX() {cpu.x = cpu.read(0x100+cpu.sp); cpu.sp++; SET_N(cpu.x);SET_Z(cpu.x);}
+void PLY() {cpu.y = cpu.read(0x100+cpu.sp); cpu.sp++; SET_N(cpu.y);SET_Z(cpu.y);}
 void ROL() {
     if (is_value) value = cpu.a;
     else value = cpu.read(addr);
@@ -335,9 +336,9 @@ void ROR() {
 }
 void RTI() {ERROR("Don't have IRQS");}
 void RTS() {
-    cpu.pc = (cpu.read(0x100+(cpu.sp + 2)) << 8) | cpu.read(0x100+(cpu.sp + 1));
-    cpu.pc++;
+    cpu.pc = (cpu.read(0x100+(uint8_t)(cpu.sp + 1)) << 8) | cpu.read(0x100+cpu.sp);
     cpu.sp += 2;
+    cpu.pc++;
 }
 
 void SBC() {
