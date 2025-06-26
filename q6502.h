@@ -28,6 +28,8 @@ struct instruction {
     uint8_t cycles;
 };
 
+extern struct cpu cpu;
+
 void cpu_step();
 void cpu_init(uint8_t (*read)(uint16_t addr), void (*write)(uint16_t addr, uint8_t value));
 
