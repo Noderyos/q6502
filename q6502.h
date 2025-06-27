@@ -1,6 +1,7 @@
 #ifndef Q6502_H
 #define Q6502_H
 #include <stdint.h>
+#include <stdlib.h>
 
 struct cpu {
     uint16_t pc;
