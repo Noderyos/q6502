@@ -3,6 +3,14 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+typedef enum {
+    Q6502_ERROR_OK,
+    Q6502_ERROR_IRQ,
+    Q6502_ERROR_BRK,
+    Q6502_ERROR_STP,
+    Q6502_ERROR_OP,
+} q6502_error;
+
 struct cpu {
     uint16_t pc;
     uint8_t sp;
@@ -25,6 +33,7 @@ struct cpu {
             uint8_t as_int;
         };
     } flags;
+    q6502_error error;
 };
 
 struct instruction {
@@ -36,14 +45,23 @@ struct instruction {
 
 extern struct cpu cpu;
 
+static char* q6502_error_str(q6502_error err) {
+    switch (err) {
+        case Q6502_ERROR_OK:  return "No error";
+        case Q6502_ERROR_IRQ: return "q6502 doesn't support IRQ's";
+        case Q6502_ERROR_BRK: return "Q6502_ERROR_BRK";
+        case Q6502_ERROR_STP: return "Q6502_ERROR_STP";
+        case Q6502_ERROR_OP:  return "Invalid OpCode";
+        default:              return "Unknown error";
+    }
+}
+
 void cpu_step();
 void cpu_init(uint8_t (*read)(uint16_t addr), void (*write)(uint16_t addr, uint8_t value));
 
 #endif
 #ifdef Q6502_IMPLEMENTATION
 #undef Q6502_IMPLEMENTATION
-
-#define ERROR(x) do { fprintf(stderr, "ERROR at %s:%d : %s\n", __FILE__, __LINE__, x); exit(1);} while(0)
 
 struct cpu cpu = {.sp = 0xFD};
 
@@ -228,7 +246,7 @@ void BMI() {if (cpu.flags.N == 1) cpu.pc = addr;}
 void BNE() {if (cpu.flags.Z == 0) cpu.pc = addr;}
 void BPL() {if (cpu.flags.N == 0) cpu.pc = addr;}
 void BRA() {cpu.pc = addr;}
-void BRK() {ERROR("BRK");}
+void BRK() {cpu.error = Q6502_ERROR_BRK;}
 void BVC() {if (cpu.flags.V == 0) cpu.pc = addr;}
 void BVS() {if (cpu.flags.V == 1) cpu.pc = addr;}
 void CLC() {cpu.flags.C = 0;}
@@ -370,7 +388,7 @@ void ROR() {
 
     SET_N(value);SET_Z(value);
 }
-void RTI() {ERROR("Don't have IRQS");}
+void RTI() {cpu.error = Q6502_ERROR_IRQ;}
 void RTS() {
     cpu.sp++;
     cpu.pc = (cpu.read(0x100+(uint8_t)(cpu.sp + 1)) << 8) | cpu.read(0x100+cpu.sp);
@@ -429,9 +447,9 @@ void TSB() {
     cpu.write(addr, value & ~cpu.a);
 }
 
-void STP() {ERROR("STP");}
-void WAI() {ERROR("Don't have IRQS");}
-void XXX() {ERROR("INVALID INSTRUCTION");}
+void STP() {cpu.error = Q6502_ERROR_STP;}
+void WAI() {cpu.error = Q6502_ERROR_IRQ;}
+void XXX() {cpu.error = Q6502_ERROR_OP;}
 
 struct instruction instructions[256] = {
     {"BRK",&BRK,&STK,3},{"ORA",&ORA,&ZII,6},{"XXX",&XXX,&XXX,0},{"XXX",&XXX,&XXX,0},
@@ -509,10 +527,12 @@ void cpu_init(uint8_t (*read)(uint16_t addr), void (*write)(uint16_t addr, uint8
     cpu.x = 0;
     cpu.y = 0;
     cpu.flags.as_int = 0;
+    cpu.error = Q6502_ERROR_OK;
 }
 
 void cpu_step() {
     is_value = 0;
+    cpu.error = Q6502_ERROR_OK;
     uint8_t byte = cpu.read(cpu.pc++);
     struct instruction opcode = instructions[byte];
     opcode.addr();
