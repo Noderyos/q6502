@@ -101,7 +101,13 @@ void ABY() {
     addr = read_word_pc() + cpu.y;
 }
 void IND() {
+#ifdef Q6502_WDC65C02
     addr = read_word(read_word_pc());
+#else
+    addr = read_word_pc();
+    uint8_t low = (addr+1)&0xFF;
+    addr = cpu.read((addr&0xFF00) | low) << 8 | cpu.read(addr);
+#endif
 }
 void ACC() {
     is_value = 1; value = cpu.a;
@@ -187,30 +193,46 @@ void ADC() {
     if (!is_value) value = cpu.read(addr);
 
     uint16_t carry = cpu.flags.C ? 1 : 0;
-    uint16_t result;
-    if (cpu.flags.D) {
-        uint16_t low = (cpu.a&0xF) + (value&0xF) + carry;
-        if (low > 0x09) low += 0x06;
+    uint16_t result = cpu.a + value + carry;
 
-        carry = low > 0xF ? 0x10 : 0;
-        uint16_t high = (cpu.a&0xF0) + (value&0xF0) + carry;
+#ifndef Q6502_WDC65C02
+    SET_N(result & 0xFF);
+    SET_Z(result & 0xFF);
+#endif
+
+    if (cpu.flags.D) {
+        uint16_t low = (cpu.a & 0x0F) + (value & 0x0F) + carry;
+        if (low > 0x09) low += 0x06;
+        carry = low > 0x0F ? 1 : 0;
+#ifdef Q6502_WDC65C02
+        uint16_t high = (cpu.a & 0xF0) + (value & 0xF0) + (carry<<4);
 
         cpu.flags.V = (~(cpu.a ^ value) & (cpu.a ^ (high&0xFF)) & 0x80) != 0;
 
         if (high > 0x90) high += 0x60;
+        cpu.flags.C = high > 0xFF;
         result = (high & 0xF0) | (low & 0xF);
-        SET_C(high);
+
+#else
+        uint16_t high = (cpu.a >> 4) + (value >> 4) + carry;
+
+        cpu.flags.V = (~(cpu.a ^ value) & (cpu.a ^ result) & 0x80) != 0;
+
+        if (high > 0x09) high += 0x06;
+        cpu.flags.C = high > 0x09;
+        result = ((high & 0xF) << 4) | (low & 0xF);
+#endif
     }
     else {
-        result = cpu.a + value + cpu.flags.C;
-
-        cpu.flags.V = (~(cpu.a ^ value) & (cpu.a ^ (result&0xFF)) & 0x80) != 0;
-        SET_C(result);
+        cpu.flags.V = (~(cpu.a ^ value) & (cpu.a ^ result) & 0x80) != 0;
+        cpu.flags.C = result > 0xFF;
     }
-
     cpu.a = result & 0xFF;
-    SET_N(cpu.a);SET_Z(cpu.a);
+#ifdef Q6502_WDC65C02
+    SET_Z(cpu.a); SET_N(cpu.a);
+#endif
 }
+
 void AND() {
     if (is_value) cpu.a &= value;
     else          cpu.a &= cpu.read(addr);
@@ -396,30 +418,45 @@ void RTS() {
     cpu.pc++;
 }
 
+
 void SBC() {
     if (!is_value) value = cpu.read(addr);
     uint16_t borrow = cpu.flags.C ? 0 : 1;
+    uint16_t result = cpu.a - value - borrow;
 
-    uint16_t result;
+#ifndef Q6502_WDC65C02
+    SET_N(result & 0xFF);
+    SET_Z(result & 0xFF);
+#endif
     if (cpu.flags.D) {
-        int16_t low = (cpu.a&0x0F) - (value&0x0F) - borrow;
+        int16_t low = (cpu.a & 0x0F) - (value & 0x0F) - borrow;
+        borrow = low < 0 ? 1 : 0;
+#ifndef Q6502_WDC65C02
+        int16_t hgh = (cpu.a >> 4) - (value >> 4) - borrow;
 
-        borrow = low < 0 ? 0x10 : 0;
-        int16_t hgh = (cpu.a&0xF0) - (value&0xF0) - borrow;
+        if (low < 0) low -= 0x06;
+        if (hgh < 0) hgh -= 0x06;
 
-        result = (hgh&0xF0) + (low&0xF);
-        cpu.flags.C = hgh >= 0; // Special
+        cpu.flags.V = ((cpu.a ^ value) & 0x80) && ((cpu.a ^ result) & 0x80);
+        result = ((hgh & 0x0F) << 4) | (low & 0x0F);
+#else
+        int16_t hgh = (cpu.a & 0xF0) - (value & 0xF0) - (borrow<<4);
+
+        result = (hgh & 0xF0) | (low & 0xF);
         cpu.flags.V = ((cpu.a ^ value) & 0x80) && ((cpu.a ^ result) & 0x80);
 
         if (hgh < 0) result -= 0x60;
         if (low < 0) result -= 0x06;
+#endif
+        cpu.flags.C = hgh >= 0; // Special
     } else {
-        result = cpu.a - value - borrow;
         cpu.flags.C = result < 0x100; // Special
         cpu.flags.V = ((cpu.a ^ value) & 0x80) && ((cpu.a ^ result) & 0x80);
     }
     cpu.a = result;
+#ifdef Q6502_WDC65C02
     SET_Z(cpu.a); SET_N(cpu.a);
+#endif
 }
 
 void SEC() {cpu.flags.C = 1;}

@@ -9,6 +9,7 @@ using async character input to emulate serial interface. Input file is loaded at
 
 ```c
 #define Q6502_IMPLEMENTATION
+#define Q6502_WDC65C02 // Enable 65C02 CPU
 #include "q6502.h"
 
 // You need to provide two functions
@@ -26,3 +27,10 @@ int main(void) {
     }
 }
 ```
+
+# Implementation
+
+## Except IRQs
+
+- WDC65C02: 100% except Invalid OpCodes
+- NMOS6502: 98% of ADC, 99.99% of `JSR a` (1 failed), 100% others except Invalid/Undocumented OpCodes
