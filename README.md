@@ -32,5 +32,5 @@ int main(void) {
 
 ## Except IRQs
 
-- WDC65C02: 100% except Invalid OpCodes
+- WDC65C02: 100%
 - NMOS6502: 98% of ADC, 99.99% of `JSR a` (1 failed), 100% others except Invalid/Undocumented OpCodes

@@ -6,7 +6,6 @@
 
 typedef enum {
     Q6502_ERROR_OK,
-    Q6502_ERROR_BRK,
     Q6502_ERROR_STP,
     Q6502_ERROR_OP,
 } q6502_error;
@@ -51,7 +50,6 @@ extern struct cpu cpu;
 static char* q6502_error_str(q6502_error err) {
     switch (err) {
         case Q6502_ERROR_OK:  return "No error";
-        case Q6502_ERROR_BRK: return "Q6502_ERROR_BRK";
         case Q6502_ERROR_STP: return "Q6502_ERROR_STP";
         case Q6502_ERROR_OP:  return "Invalid OpCode";
         default:              return "Unknown error";
@@ -274,7 +272,25 @@ void BMI() {if (cpu.flags.N == 1) cpu.pc = addr;}
 void BNE() {if (cpu.flags.Z == 0) cpu.pc = addr;}
 void BPL() {if (cpu.flags.N == 0) cpu.pc = addr;}
 void BRA() {cpu.pc = addr;}
-void BRK() {cpu.error = Q6502_ERROR_BRK;}
+void BRK() {
+    cpu.pc++;
+    cpu.sp -= 3;
+    cpu.write(0x100+WRAP(cpu.sp, +3), (cpu.pc >> 8));
+    cpu.write(0x100+WRAP(cpu.sp, +2), cpu.pc & 0xFF);
+
+    uint8_t old_b = cpu.flags.B;
+    cpu.flags.B = 1;
+    cpu.write(0x100+WRAP(cpu.sp, +1), cpu.flags.as_int);
+    cpu.flags.B = old_b;
+
+    cpu.flags.I = 1;
+
+#ifdef Q6502_WDC65C02
+    cpu.flags.D = 0;
+#endif
+
+    cpu.pc = (cpu.read(0xFFFF) << 8) | cpu.read(0xFFFE);
+}
 void BVC() {if (cpu.flags.V == 0) cpu.pc = addr;}
 void BVS() {if (cpu.flags.V == 1) cpu.pc = addr;}
 void CLC() {cpu.flags.C = 0;}
@@ -500,7 +516,7 @@ void XXX() {cpu.error = Q6502_ERROR_OP;}
 
 struct instruction instructions[256] = {
 #ifdef Q6502_WDC65C02
-    {"BRK",&BRK,&STK,3},{"ORA",&ORA,&ZII,6},{"XXX",&XXX,&XXX,0},{"XXX",&XXX,&XXX,0},
+    {"BRK",&BRK,&STK,3},{"ORA",&ORA,&ZII,6},{"XXX",&NOP,&IMM,2},{"XXX",&XXX,&XXX,0},
     {"TSB",&TSB,&ZP0,3},{"ORA",&ORA,&ZP0,3},{"ASL",&ASL,&ZP0,3},{"RMB0",&RMB0,&ZP0,3},
     {"PHP",&PHP,&STK,3},{"ORA",&ORA,&IMM,2},{"ASL",&ASL,&ACC,2},{"XXX",&XXX,&XXX,0},
     {"TSB",&TSB,&ABS,4},{"ORA",&ORA,&ABS,4},{"ASL",&ASL,&ABS,4},{"BBR0",&BBR0,&ZPR,2},
@@ -508,7 +524,7 @@ struct instruction instructions[256] = {
     {"TRB",&TRB,&ZP0,3},{"ORA",&ORA,&ZPX,4},{"ASL",&ASL,&ZPX,4},{"RMB1",&RMB1,&ZP0,3},
     {"CLC",&CLC,&IMP,2},{"ORA",&ORA,&ABY,4},{"INC",&INC,&ACC,2},{"XXX",&XXX,&XXX,0},
     {"TRB",&TRB,&ABS,4},{"ORA",&ORA,&ABX,4},{"ASL",&ASL,&ABX,4},{"BBR1",&BBR1,&ZPR,2},
-    {"JSR",&JSR,&ABS,4},{"AND",&AND,&ZII,6},{"XXX",&XXX,&XXX,0},{"XXX",&XXX,&XXX,0},
+    {"JSR",&JSR,&ABS,4},{"AND",&AND,&ZII,6},{"XXX",&NOP,&IMM,2},{"XXX",&XXX,&XXX,0},
     {"BIT",&BIT,&ZP0,3},{"AND",&AND,&ZP0,3},{"ROL",&ROL,&ZP0,3},{"RMB2",&RMB2,&ZP0,3},
     {"PLP",&PLP,&STK,3},{"AND",&AND,&IMM,2},{"ROL",&ROL,&ACC,2},{"XXX",&XXX,&XXX,0},
     {"BIT",&BIT,&ABS,4},{"AND",&AND,&ABS,4},{"ROL",&ROL,&ABS,4},{"BBR2",&BBR2,&ZPR,2},
@@ -516,15 +532,15 @@ struct instruction instructions[256] = {
     {"BIT",&BIT,&ZPX,4},{"AND",&AND,&ZPX,4},{"ROL",&ROL,&ZPX,4},{"RMB3",&RMB3,&ZP0,3},
     {"SEC",&SEC,&IMP,2},{"AND",&AND,&ABY,4},{"DEC",&DEC,&ACC,2},{"XXX",&XXX,&XXX,0},
     {"BIT",&BIT,&ABX,4},{"AND",&AND,&ABX,4},{"ROL",&ROL,&ABX,4},{"BBR3",&BBR3,&ZPR,2},
-    {"RTI",&RTI,&STK,3},{"EOR",&EOR,&ZII,6},{"XXX",&XXX,&XXX,0},{"XXX",&XXX,&XXX,0},
-    {"XXX",&XXX,&XXX,0},{"EOR",&EOR,&ZP0,3},{"LSR",&LSR,&ZP0,3},{"RMB4",&RMB4,&ZP0,3},
+    {"RTI",&RTI,&STK,3},{"EOR",&EOR,&ZII,6},{"XXX",&NOP,&IMM,2},{"XXX",&XXX,&XXX,0},
+    {"XXX",&NOP,&IMM,3},{"EOR",&EOR,&ZP0,3},{"LSR",&LSR,&ZP0,3},{"RMB4",&RMB4,&ZP0,3},
     {"PHA",&PHA,&STK,3},{"EOR",&EOR,&IMM,2},{"LSR",&LSR,&ACC,2},{"XXX",&XXX,&XXX,0},
     {"JMP",&JMP,&ABS,4},{"EOR",&EOR,&ABS,4},{"LSR",&LSR,&ABS,4},{"BBR4",&BBR4,&ZPR,2},
     {"BVC",&BVC,&PCR,2},{"EOR",&EOR,&ZIY,5},{"EOR",&EOR,&ZPI,5},{"XXX",&XXX,&XXX,0},
-    {"XXX",&XXX,&XXX,0},{"EOR",&EOR,&ZPX,4},{"LSR",&LSR,&ZPX,4},{"RMB5",&RMB5,&ZP0,3},
+    {"XXX",&NOP,&IMM,4},{"EOR",&EOR,&ZPX,4},{"LSR",&LSR,&ZPX,4},{"RMB5",&RMB5,&ZP0,3},
     {"CLI",&CLI,&IMP,2},{"EOR",&EOR,&ABY,4},{"PHY",&PHY,&STK,3},{"XXX",&XXX,&XXX,0},
-    {"XXX",&XXX,&XXX,0},{"EOR",&EOR,&ABX,4},{"LSR",&LSR,&ABX,4},{"BBR5",&BBR5,&ZPR,2},
-    {"RTS",&RTS,&STK,3},{"ADC",&ADC,&ZII,6},{"XXX",&XXX,&XXX,0},{"XXX",&XXX,&XXX,0},
+    {"XXX",&NOP,&ABS,8},{"EOR",&EOR,&ABX,4},{"LSR",&LSR,&ABX,4},{"BBR5",&BBR5,&ZPR,2},
+    {"RTS",&RTS,&STK,3},{"ADC",&ADC,&ZII,6},{"XXX",&NOP,&IMM,2},{"XXX",&XXX,&XXX,0},
     {"STZ",&STZ,&ZP0,3},{"ADC",&ADC,&ZP0,3},{"ROR",&ROR,&ZP0,3},{"RMB6",&RMB6,&ZP0,3},
     {"PLA",&PLA,&STK,3},{"ADC",&ADC,&IMM,2},{"ROR",&ROR,&ACC,2},{"XXX",&XXX,&XXX,0},
     {"JMP",&JMP,&IND,6},{"ADC",&ADC,&ABS,4},{"ROR",&ROR,&ABS,4},{"BBR6",&BBR6,&ZPR,2},
@@ -532,7 +548,7 @@ struct instruction instructions[256] = {
     {"STZ",&STZ,&ZPX,4},{"ADC",&ADC,&ZPX,4},{"ROR",&ROR,&ZPX,4},{"RMB7",&RMB7,&ZP0,3},
     {"SEI",&SEI,&IMP,2},{"ADC",&ADC,&ABY,4},{"PLY",&PLY,&STK,3},{"XXX",&XXX,&XXX,0},
     {"JMP",&JMP,&ABI,6},{"ADC",&ADC,&ABX,4},{"ROR",&ROR,&ABX,4},{"BBR7",&BBR7,&ZPR,2},
-    {"BRA",&BRA,&PCR,2},{"STA",&STA,&ZII,6},{"XXX",&XXX,&XXX,0},{"XXX",&XXX,&XXX,0},
+    {"BRA",&BRA,&PCR,2},{"STA",&STA,&ZII,6},{"XXX",&NOP,&IMM,2},{"XXX",&XXX,&XXX,0},
     {"STY",&STY,&ZP0,3},{"STA",&STA,&ZP0,3},{"STX",&STX,&ZP0,3},{"SMB0",&SMB0,&ZP0,3},
     {"DEY",&DEY,&IMP,2},{"BIT",&BIT,&IMM,2},{"TXA",&TXA,&IMP,2},{"XXX",&XXX,&XXX,0},
     {"STY",&STY,&ABS,4},{"STA",&STA,&ABS,4},{"STX",&STX,&ABS,4},{"BBS0",&BBS0,&ZPR,2},
@@ -548,22 +564,22 @@ struct instruction instructions[256] = {
     {"LDY",&LDY,&ZPX,4},{"LDA",&LDA,&ZPX,4},{"LDX",&LDX,&ZPY,4},{"SMB3",&SMB3,&ZP0,3},
     {"CLV",&CLV,&IMP,2},{"LDA",&LDA,&ABY,4},{"TSX",&TSX,&IMP,2},{"XXX",&XXX,&XXX,0},
     {"LDY",&LDY,&ABX,4},{"LDA",&LDA,&ABX,4},{"LDX",&LDX,&ABY,4},{"BBS3",&BBS3,&ZPR,2},
-    {"CPY",&CPY,&IMM,2},{"CMP",&CMP,&ZII,6},{"XXX",&XXX,&XXX,0},{"XXX",&XXX,&XXX,0},
+    {"CPY",&CPY,&IMM,2},{"CMP",&CMP,&ZII,6},{"XXX",&NOP,&IMM,2},{"XXX",&XXX,&XXX,0},
     {"CPY",&CPY,&ZP0,3},{"CMP",&CMP,&ZP0,3},{"DEC",&DEC,&ZP0,3},{"SMB4",&SMB4,&ZP0,3},
     {"INY",&INY,&IMP,2},{"CMP",&CMP,&IMM,2},{"DEX",&DEX,&IMP,2},{"WAI",&WAI,&IMP,2},
     {"CPY",&CPY,&ABS,4},{"CMP",&CMP,&ABS,4},{"DEC",&DEC,&ABS,4},{"BBS4",&BBS4,&ZPR,2},
     {"BNE",&BNE,&PCR,2},{"CMP",&CMP,&ZIY,5},{"CMP",&CMP,&ZPI,5},{"XXX",&XXX,&XXX,0},
-    {"XXX",&XXX,&XXX,0},{"CMP",&CMP,&ZPX,4},{"DEC",&DEC,&ZPX,4},{"SMB5",&SMB5,&ZP0,3},
+    {"XXX",&NOP,&IMM,4},{"CMP",&CMP,&ZPX,4},{"DEC",&DEC,&ZPX,4},{"SMB5",&SMB5,&ZP0,3},
     {"CLD",&CLD,&IMP,2},{"CMP",&CMP,&ABY,4},{"PHX",&PHX,&STK,3},{"STP",&STP,&IMP,2},
-    {"XXX",&XXX,&XXX,0},{"CMP",&CMP,&ABX,4},{"DEC",&DEC,&ABX,4},{"BBS5",&BBS5,&ZPR,2},
-    {"CPX",&CPX,&IMM,2},{"SBC",&SBC,&ZII,6},{"XXX",&XXX,&XXX,0},{"XXX",&XXX,&XXX,0},
+    {"XXX",&NOP,&ABS,4},{"CMP",&CMP,&ABX,4},{"DEC",&DEC,&ABX,4},{"BBS5",&BBS5,&ZPR,2},
+    {"CPX",&CPX,&IMM,2},{"SBC",&SBC,&ZII,6},{"XXX",&NOP,&IMM,2},{"XXX",&XXX,&XXX,0},
     {"CPX",&CPX,&ZP0,3},{"SBC",&SBC,&ZP0,3},{"INC",&INC,&ZP0,3},{"SMB6",&SMB6,&ZP0,3},
     {"INX",&INX,&IMP,2},{"SBC",&SBC,&IMM,2},{"NOP",&NOP,&IMP,2},{"XXX",&XXX,&XXX,0},
     {"CPX",&CPX,&ABS,4},{"SBC",&SBC,&ABS,4},{"INC",&INC,&ABS,4},{"BBS6",&BBS6,&ZPR,2},
     {"BEQ",&BEQ,&PCR,2},{"SBC",&SBC,&ZIY,5},{"SBC",&SBC,&ZPI,5},{"XXX",&XXX,&XXX,0},
-    {"XXX",&XXX,&XXX,0},{"SBC",&SBC,&ZPX,4},{"INC",&INC,&ZPX,4},{"SMB7",&SMB7,&ZP0,3},
+    {"XXX",&NOP,&IMM,4},{"SBC",&SBC,&ZPX,4},{"INC",&INC,&ZPX,4},{"SMB7",&SMB7,&ZP0,3},
     {"SED",&SED,&IMP,2},{"SBC",&SBC,&ABY,4},{"PLX",&PLX,&STK,3},{"XXX",&XXX,&XXX,0},
-    {"XXX",&XXX,&XXX,0},{"SBC",&SBC,&ABX,4},{"INC",&INC,&ABX,4},{"BBS7",&BBS7,&ZPR,2}
+    {"XXX",&NOP,&ABS,4},{"SBC",&SBC,&ABX,4},{"INC",&INC,&ABX,4},{"BBS7",&BBS7,&ZPR,2}
 #else
     {"BRK",&BRK,&STK,3},{"ORA",&ORA,&ZII,6},{"XXX",&XXX,&XXX,0},{"XXX",&XXX,&XXX,0},
     {"XXX",&XXX,&XXX,0},{"ORA",&ORA,&ZP0,3},{"ASL",&ASL,&ZP0,3},{"XXX",&XXX,&XXX,0},
@@ -668,7 +684,7 @@ void cpu_irq() {
         return;
     }
 
-    cpu.sp -= 4;
+    cpu.sp -= 3;
     cpu.write(0x100+WRAP(cpu.sp, +3), (cpu.pc >> 8));
     cpu.write(0x100+WRAP(cpu.sp, +2), cpu.pc & 0xFF);
 
@@ -692,12 +708,12 @@ void cpu_nmi() {
 #endif
 
     cpu.sp -= 3;
-    cpu.write(0x100+WRAP(cpu.sp, +2), (cpu.pc >> 8)>>8);
-    cpu.write(0x100+WRAP(cpu.sp, +1), cpu.pc & 0xFF);
+    cpu.write(0x100+WRAP(cpu.sp, +3), (cpu.pc >> 8));
+    cpu.write(0x100+WRAP(cpu.sp, +2), cpu.pc & 0xFF);
 
     uint8_t old_b = cpu.flags.B;
     cpu.flags.B=0;
-    cpu.write(0x100+cpu.sp, cpu.flags.as_int);
+    cpu.write(0x100+WRAP(cpu.sp, +1), cpu.flags.as_int);
     cpu.flags.B = old_b;
 
     cpu.flags.I = 1;
