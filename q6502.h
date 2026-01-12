@@ -1,11 +1,11 @@
 #ifndef Q6502_H
 #define Q6502_H
+#include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
 
 typedef enum {
     Q6502_ERROR_OK,
-    Q6502_ERROR_IRQ,
     Q6502_ERROR_BRK,
     Q6502_ERROR_STP,
     Q6502_ERROR_OP,
@@ -34,6 +34,9 @@ struct cpu {
         };
     } flags;
     q6502_error error;
+#ifdef Q6502_WDC65C02
+    int wai;
+#endif
 };
 
 struct instruction {
@@ -48,7 +51,6 @@ extern struct cpu cpu;
 static char* q6502_error_str(q6502_error err) {
     switch (err) {
         case Q6502_ERROR_OK:  return "No error";
-        case Q6502_ERROR_IRQ: return "q6502 doesn't support IRQ's";
         case Q6502_ERROR_BRK: return "Q6502_ERROR_BRK";
         case Q6502_ERROR_STP: return "Q6502_ERROR_STP";
         case Q6502_ERROR_OP:  return "Invalid OpCode";
@@ -58,10 +60,14 @@ static char* q6502_error_str(q6502_error err) {
 
 void cpu_step();
 void cpu_init(uint8_t (*read)(uint16_t addr), void (*write)(uint16_t addr, uint8_t value));
+void cpu_irq();
+void cpu_nmi();
 
 #endif
 #ifdef Q6502_IMPLEMENTATION
 #undef Q6502_IMPLEMENTATION
+
+#define WRAP(addr, op) (((addr)&0xFF00)|(((addr) op)&0xFF))
 
 struct cpu cpu = {.sp = 0xFD};
 
@@ -69,8 +75,8 @@ uint16_t read_word(uint16_t addr) {
     return cpu.read(addr+1) << 8 | cpu.read(addr);
 }
 
-uint16_t read_word_zp(uint16_t addr) {
-    return cpu.read((addr+1)&0xff) << 8 | cpu.read(addr);
+uint16_t read_word_wrap(uint16_t addr) {
+    return cpu.read(WRAP(addr, +1)) << 8 | cpu.read(addr);
 }
 
 uint8_t read_byte_pc() {
@@ -121,14 +127,14 @@ void PCR() {
     addr = cpu.pc + offset;
 }
 void STK() {
-    addr = 0x100 + cpu.sp;
+    addr = 0x100 + ((cpu.sp+1)&0xFF);
 }
 
 void ZP0() {
     addr = read_byte_pc();
 }
 void ZII() {
-    addr = read_word_zp((read_byte_pc() + cpu.x) & 0xFF);
+    addr = read_word_wrap((read_byte_pc() + cpu.x) & 0xFF);
 }
 void ZPX() {
     addr = (read_byte_pc() + cpu.x) & 0xFF;
@@ -137,10 +143,10 @@ void ZPY() {
     addr = (read_byte_pc() + cpu.y) & 0xFF;
 }
 void ZPI() {
-    addr = read_word_zp(read_byte_pc());
+    addr = read_word_wrap(read_byte_pc());
 }
 void ZIY() {
-    addr = read_word_zp(read_byte_pc()) + cpu.y;
+    addr = read_word_wrap(read_byte_pc()) + cpu.y;
 }
 void ZPR() { // Custom mode for BBS/BBR instructions
     is_value = 1;
@@ -330,10 +336,10 @@ void INC() {
 void INX() {cpu.x++;SET_N(cpu.x);SET_Z(cpu.x);}
 void INY() {cpu.y++;SET_N(cpu.y);SET_Z(cpu.y);}
 void JMP() {cpu.pc = addr;}
-void JSR() { // Not accurate, real 6502 push PC-1 bc CPU will increase PC after RTS
+void JSR() {
     uint16_t next_pc = cpu.pc - 1;
     cpu.sp -= 2;
-    cpu.write(0x100+(uint8_t)(cpu.sp+1), next_pc>>8);
+    cpu.write(0x100+WRAP(cpu.sp, +1), next_pc>>8);
     cpu.write(0x100+cpu.sp, next_pc & 0xFF);
 
     cpu.pc = addr;
@@ -375,15 +381,15 @@ void ORA() {
     else          cpu.a |= cpu.read(addr);
     SET_N(cpu.a);SET_Z(cpu.a);
 }
-void PHA() {cpu.write(0x100+(uint8_t)(cpu.sp-1), cpu.a);cpu.sp--;}
-void PHP() {uint8_t old_b = cpu.flags.B;cpu.flags.B=1;cpu.write(0x100+(uint8_t)(cpu.sp-1), cpu.flags.as_int);cpu.flags.B = old_b;cpu.sp--;}
-void PHX() {cpu.write(0x100+(uint8_t)(cpu.sp-1), cpu.x);cpu.sp--;}
-void PHY() {cpu.write(0x100+(uint8_t)(cpu.sp-1), cpu.y);cpu.sp--;}
+void PHA() {cpu.sp--;cpu.write(WRAP(addr, -1), cpu.a);}
+void PHP() {cpu.sp--;uint8_t old_b = cpu.flags.B;cpu.flags.B=1;cpu.write(WRAP(addr, -1), cpu.flags.as_int);cpu.flags.B = old_b;}
+void PHX() {cpu.sp--;cpu.write(WRAP(addr, -1), cpu.x);}
+void PHY() {cpu.sp--;cpu.write(WRAP(addr, -1), cpu.y);}
 
-void PLA() {cpu.sp++; cpu.a = cpu.read(0x100+cpu.sp); SET_N(cpu.a);SET_Z(cpu.a);}
-void PLP() {cpu.sp++; cpu.flags.as_int = cpu.read(0x100+cpu.sp); cpu.flags.B = 0; cpu.flags.u = 1;}
-void PLX() {cpu.sp++; cpu.x = cpu.read(0x100+cpu.sp); SET_N(cpu.x);SET_Z(cpu.x);}
-void PLY() {cpu.sp++; cpu.y = cpu.read(0x100+cpu.sp); SET_N(cpu.y);SET_Z(cpu.y);}
+void PLA() {cpu.sp++; cpu.a = cpu.read(addr); SET_N(cpu.a);SET_Z(cpu.a);}
+void PLP() {cpu.sp++; cpu.flags.as_int = cpu.read(addr); cpu.flags.B = 0; cpu.flags.u = 1;}
+void PLX() {cpu.sp++; cpu.x = cpu.read(addr); SET_N(cpu.x);SET_Z(cpu.x);}
+void PLY() {cpu.sp++; cpu.y = cpu.read(addr); SET_N(cpu.y);SET_Z(cpu.y);}
 void ROL() {
     if (is_value) value = cpu.a;
     else value = cpu.read(addr);
@@ -410,12 +416,15 @@ void ROR() {
 
     SET_N(value);SET_Z(value);
 }
-void RTI() {cpu.error = Q6502_ERROR_IRQ;}
 void RTS() {
-    cpu.sp++;
-    cpu.pc = (cpu.read(0x100+(uint8_t)(cpu.sp + 1)) << 8) | cpu.read(0x100+cpu.sp);
-    cpu.sp++;
+    cpu.pc = read_word_wrap(addr);
+    cpu.sp += 2;
     cpu.pc++;
+}
+void RTI() {
+    PLP();
+    cpu.pc = read_word_wrap(WRAP(addr, +1));
+    cpu.sp += 2;
 }
 
 
@@ -483,9 +492,10 @@ void TSB() {
     SET_Z(cpu.a & value);
     cpu.write(addr, value & ~cpu.a);
 }
-
+#ifdef Q6502_WDC65C02
 void STP() {cpu.error = Q6502_ERROR_STP;}
-void WAI() {cpu.error = Q6502_ERROR_IRQ;}
+void WAI() {cpu.wai = 1;}
+#endif
 void XXX() {cpu.error = Q6502_ERROR_OP;}
 
 struct instruction instructions[256] = {
@@ -631,16 +641,72 @@ void cpu_init(uint8_t (*read)(uint16_t addr), void (*write)(uint16_t addr, uint8
     cpu.x = 0;
     cpu.y = 0;
     cpu.flags.as_int = 0;
+    cpu.flags.u = 1;
     cpu.error = Q6502_ERROR_OK;
+#ifdef Q6502_WDC65C02
+    cpu.wai = 0;
+#endif
 }
 
 void cpu_step() {
+#ifdef Q6502_WDC65C02
+    if (cpu.wai) return;
+#endif
     is_value = 0;
     cpu.error = Q6502_ERROR_OK;
     uint8_t byte = cpu.read(cpu.pc++);
     struct instruction opcode = instructions[byte];
     opcode.addr();
     opcode.opcode();
+}
+
+void cpu_irq() {
+#ifdef Q6502_WDC65C02
+    cpu.wai = 0;
+#endif
+    if (cpu.flags.I) {
+        return;
+    }
+
+    cpu.sp -= 4;
+    cpu.write(0x100+WRAP(cpu.sp, +3), (cpu.pc >> 8));
+    cpu.write(0x100+WRAP(cpu.sp, +2), cpu.pc & 0xFF);
+
+    uint8_t old_b = cpu.flags.B;
+    cpu.flags.B=0;
+    cpu.write(0x100+WRAP(cpu.sp, +1), cpu.flags.as_int);
+    cpu.flags.B = old_b;
+
+    cpu.flags.I = 1;
+
+#ifdef Q6502_WDC65C02
+    cpu.flags.D = 0;
+#endif
+
+    cpu.pc = (cpu.read(0xFFFF) << 8) | cpu.read(0xFFFE);
+}
+
+void cpu_nmi() {
+#ifdef Q6502_WDC65C02
+    cpu.wai = 0;
+#endif
+
+    cpu.sp -= 3;
+    cpu.write(0x100+WRAP(cpu.sp, +2), (cpu.pc >> 8)>>8);
+    cpu.write(0x100+WRAP(cpu.sp, +1), cpu.pc & 0xFF);
+
+    uint8_t old_b = cpu.flags.B;
+    cpu.flags.B=0;
+    cpu.write(0x100+cpu.sp, cpu.flags.as_int);
+    cpu.flags.B = old_b;
+
+    cpu.flags.I = 1;
+
+#ifdef Q6502_WDC65C02
+    cpu.flags.D = 0;
+#endif
+
+    cpu.pc = (cpu.read(0xFFFB) << 8) | cpu.read(0xFFFA);
 }
 
 #endif
