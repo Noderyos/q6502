@@ -47,7 +47,7 @@ struct instruction {
 
 extern struct cpu cpu;
 
-static char* q6502_error_str(q6502_error err) {
+static inline char* q6502_error_str(q6502_error err) {
     switch (err) {
         case Q6502_ERROR_OK:  return "No error";
         case Q6502_ERROR_STP: return "Q6502_ERROR_STP";
@@ -355,8 +355,8 @@ void JMP() {cpu.pc = addr;}
 void JSR() {
     uint16_t next_pc = cpu.pc - 1;
     cpu.sp -= 2;
-    cpu.write(0x100+WRAP(cpu.sp, +1), next_pc>>8);
-    cpu.write(0x100+cpu.sp, next_pc & 0xFF);
+    cpu.write(0x100+WRAP(cpu.sp, +2), next_pc>>8);
+    cpu.write(0x100+WRAP(cpu.sp, +1), next_pc & 0xFF);
 
     cpu.pc = addr;
 }
@@ -501,12 +501,12 @@ void TXS() {cpu.sp = cpu.x;}
 void TRB() {
     value = cpu.read(addr);
     SET_Z(cpu.a & value);
-    cpu.write(addr, value | cpu.a);
+    cpu.write(addr, value & ~cpu.a);
 }
 void TSB() {
     value = cpu.read(addr);
     SET_Z(cpu.a & value);
-    cpu.write(addr, value & ~cpu.a);
+    cpu.write(addr, value | cpu.a);
 }
 #ifdef Q6502_WDC65C02
 void STP() {cpu.error = Q6502_ERROR_STP;}
