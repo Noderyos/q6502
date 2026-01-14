@@ -10,6 +10,17 @@ typedef enum {
     Q6502_ERROR_OP,
 } q6502_error;
 
+enum cpu_flags {
+    CPU_FLAG_C = 0x01,
+    CPU_FLAG_Z = 0x02,
+    CPU_FLAG_I = 0x04,
+    CPU_FLAG_D = 0x08,
+    CPU_FLAG_B = 0x10,
+    CPU_FLAG_u = 0x20,
+    CPU_FLAG_V = 0x40,
+    CPU_FLAG_N = 0x80,
+};
+
 struct cpu {
     uint16_t pc;
     uint8_t sp;
@@ -17,21 +28,7 @@ struct cpu {
     uint8_t x, y;
     uint8_t (*read)(uint16_t addr);
     void (*write)(uint16_t addr, uint8_t value);
-    struct {
-        union {
-            struct {
-                uint8_t C:1;
-                uint8_t Z:1;
-                uint8_t I:1;
-                uint8_t D:1;
-                uint8_t B:1;
-                uint8_t u:1;
-                uint8_t V:1;
-                uint8_t N:1;
-            };
-            uint8_t as_int;
-        };
-    } flags;
+    uint8_t flags;
     q6502_error error;
 #ifdef Q6502_WDC65C02
     int wai;
@@ -153,9 +150,15 @@ void ZPR() { // Custom mode for BBS/BBR instructions
     addr = cpu.pc + offset;
 }
 
-#define SET_N(x) do {cpu.flags.N=((x)>>7)&1;} while(0)
-#define SET_Z(x) do {cpu.flags.Z=(x)==0;} while(0)
-#define SET_C(x) do {cpu.flags.C=x>0xFF;} while(0)
+#define set_flag(cond, flag) \
+    do { \
+        if (cond) cpu.flags |= (flag); \
+        else cpu.flags &= ~(flag); \
+    } while(0)
+
+#define SET_N(x) set_flag((x)&0x80, CPU_FLAG_N)
+#define SET_Z(x) set_flag((x)==0, CPU_FLAG_Z)
+#define SET_C(x) set_flag(x>0xFF, CPU_FLAG_C)
 
 void BBR0() {if((value & 0x01) == 0) cpu.pc = addr;}
 void BBR1() {if((value & 0x02) == 0) cpu.pc = addr;}
@@ -196,7 +199,7 @@ void SMB7() {cpu.write(addr, cpu.read(addr) | (1 << 7));}
 void ADC() {
     if (!is_value) value = cpu.read(addr);
 
-    uint16_t carry = cpu.flags.C ? 1 : 0;
+    uint16_t carry = cpu.flags & CPU_FLAG_C ? 1 : 0;
     uint16_t result = cpu.a + value + carry;
 
 #ifndef Q6502_WDC65C02
@@ -204,32 +207,32 @@ void ADC() {
     SET_Z(result & 0xFF);
 #endif
 
-    if (cpu.flags.D) {
+    if (cpu.flags & CPU_FLAG_D) {
         uint16_t low = (cpu.a & 0x0F) + (value & 0x0F) + carry;
         if (low > 0x09) low += 0x06;
         carry = low > 0x0F ? 1 : 0;
 #ifdef Q6502_WDC65C02
         uint16_t high = (cpu.a & 0xF0) + (value & 0xF0) + (carry<<4);
 
-        cpu.flags.V = (~(cpu.a ^ value) & (cpu.a ^ (high&0xFF)) & 0x80) != 0;
+        set_flag((~(cpu.a ^ value) & (cpu.a ^ (high&0xFF)) & 0x80), CPU_FLAG_V);
 
         if (high > 0x90) high += 0x60;
-        cpu.flags.C = high > 0xFF;
+        set_flag(high > 0xFF, CPU_FLAG_C);
         result = (high & 0xF0) | (low & 0xF);
 
 #else
         uint16_t high = (cpu.a >> 4) + (value >> 4) + carry;
 
-        cpu.flags.V = (~(cpu.a ^ value) & (cpu.a ^ result) & 0x80) != 0;
+        set_flag((~(cpu.a ^ value) & (cpu.a ^ result) & 0x80), CPU_FLAG_V);
 
         if (high > 0x09) high += 0x06;
-        cpu.flags.C = high > 0x09;
+        set_flag(high > 0x09, CPU_FLAG_C);
         result = ((high & 0xF) << 4) | (low & 0xF);
 #endif
     }
     else {
-        cpu.flags.V = (~(cpu.a ^ value) & (cpu.a ^ result) & 0x80) != 0;
-        cpu.flags.C = result > 0xFF;
+        set_flag((~(cpu.a ^ value) & (cpu.a ^ result) & 0x80), CPU_FLAG_V);
+        set_flag(result > 0xFF, CPU_FLAG_C);
     }
     cpu.a = result & 0xFF;
 #ifdef Q6502_WDC65C02
@@ -247,7 +250,7 @@ void ASL() {
     if (is_value) value = cpu.a;
     else          value = cpu.read(addr);
 
-    cpu.flags.C = (value>>7) &1;
+    set_flag((value>>7)&1, CPU_FLAG_C);
     value <<= 1;
 
     if (is_value) cpu.a = value;
@@ -255,22 +258,25 @@ void ASL() {
 
     SET_N(value); SET_Z(value);
 }
-void BCC() {if (cpu.flags.C == 0) cpu.pc = addr;}
-void BCS() {if (cpu.flags.C == 1) cpu.pc = addr;}
-void BEQ() {
-    if (cpu.flags.Z == 1) cpu.pc = addr;
-}
+
+void BCC() {if (!(cpu.flags & CPU_FLAG_C)) cpu.pc = addr;}
+void BCS() {if (  cpu.flags & CPU_FLAG_C ) cpu.pc = addr;}
+void BNE() {if (!(cpu.flags & CPU_FLAG_Z)) cpu.pc = addr;}
+void BEQ() {if (  cpu.flags & CPU_FLAG_Z ) cpu.pc = addr;}
+void BPL() {if (!(cpu.flags & CPU_FLAG_N)) cpu.pc = addr;}
+void BMI() {if (  cpu.flags & CPU_FLAG_N ) cpu.pc = addr;}
+void BVC() {if (!(cpu.flags & CPU_FLAG_V)) cpu.pc = addr;}
+void BVS() {if (  cpu.flags & CPU_FLAG_V ) cpu.pc = addr;}
+
 void BIT() {
     if (!is_value) value = cpu.read(addr);
-    cpu.flags.Z = (cpu.a & value) == 0;
+    set_flag((cpu.a & value) == 0, CPU_FLAG_Z);
     if (!is_value) { // 65C02 does not update NV if in IMM mode (BIT(ACC) doesn't exist)
-        cpu.flags.N = (value>>7) & 1;
-        cpu.flags.V = (value>>6) & 1;
+        set_flag((value>>7) & 1, CPU_FLAG_N);
+        set_flag((value>>6) & 1, CPU_FLAG_V);
     }
 }
-void BMI() {if (cpu.flags.N == 1) cpu.pc = addr;}
-void BNE() {if (cpu.flags.Z == 0) cpu.pc = addr;}
-void BPL() {if (cpu.flags.N == 0) cpu.pc = addr;}
+
 void BRA() {cpu.pc = addr;}
 void BRK() {
     cpu.pc++;
@@ -278,43 +284,34 @@ void BRK() {
     cpu.write(0x100+WRAP(cpu.sp, +3), (cpu.pc >> 8));
     cpu.write(0x100+WRAP(cpu.sp, +2), cpu.pc & 0xFF);
 
-    uint8_t old_b = cpu.flags.B;
-    cpu.flags.B = 1;
-    cpu.write(0x100+WRAP(cpu.sp, +1), cpu.flags.as_int);
-    cpu.flags.B = old_b;
+    cpu.write(0x100+WRAP(cpu.sp, +1), cpu.flags | CPU_FLAG_B);
 
-    cpu.flags.I = 1;
+    cpu.flags |= CPU_FLAG_I;
 
 #ifdef Q6502_WDC65C02
-    cpu.flags.D = 0;
+    cpu.flags &= ~CPU_FLAG_D;
 #endif
 
     cpu.pc = (cpu.read(0xFFFF) << 8) | cpu.read(0xFFFE);
 }
-void BVC() {if (cpu.flags.V == 0) cpu.pc = addr;}
-void BVS() {if (cpu.flags.V == 1) cpu.pc = addr;}
-void CLC() {cpu.flags.C = 0;}
-void CLD() {cpu.flags.D = 0;}
 
-void CLI() {cpu.flags.I = 0;}
-void CLV() {cpu.flags.V = 0;}
 void CMP() {
     if (!is_value) value = cpu.read(addr);
-    cpu.flags.C = cpu.a >= value;
-    cpu.flags.Z = cpu.a == value;
-    cpu.flags.N = ((cpu.a - value) & 0x80) != 0;
+    set_flag(cpu.a >= value, CPU_FLAG_C);
+    set_flag(cpu.a == value, CPU_FLAG_Z);
+    set_flag((cpu.a - value) & 0x80, CPU_FLAG_N);
 }
 void CPX() {
     if (!is_value) value = cpu.read(addr);
-    cpu.flags.C = cpu.x >= value;
-    cpu.flags.Z = cpu.x == value;
-    cpu.flags.N = ((cpu.x - value) & 0x80) != 0;
+    set_flag(cpu.x >= value, CPU_FLAG_C);
+    set_flag(cpu.x == value, CPU_FLAG_Z);
+    set_flag((cpu.x - value) & 0x80, CPU_FLAG_N);
 }
 void CPY() {
     if (!is_value) value = cpu.read(addr);
-    cpu.flags.C = cpu.y >= value;
-    cpu.flags.Z = cpu.y == value;
-    cpu.flags.N = ((cpu.y - value) & 0x80) != 0;
+    set_flag(cpu.y >= value, CPU_FLAG_C);
+    set_flag(cpu.y == value, CPU_FLAG_Z);
+    set_flag((cpu.y - value) & 0x80, CPU_FLAG_N);
 }
 
 void DEC() {
@@ -382,7 +379,7 @@ void LSR() {
     if (is_value) value = cpu.a;
     else          value = cpu.read(addr);
 
-    cpu.flags.C = value & 1;
+    set_flag(value & 1, CPU_FLAG_C);
     value >>= 1;
 
     if (is_value) cpu.a = value;
@@ -398,21 +395,21 @@ void ORA() {
     SET_N(cpu.a);SET_Z(cpu.a);
 }
 void PHA() {cpu.sp--;cpu.write(WRAP(addr, -1), cpu.a);}
-void PHP() {cpu.sp--;uint8_t old_b = cpu.flags.B;cpu.flags.B=1;cpu.write(WRAP(addr, -1), cpu.flags.as_int);cpu.flags.B = old_b;}
+void PHP() {cpu.sp--;cpu.write(WRAP(addr, -1), cpu.flags | CPU_FLAG_B);}
 void PHX() {cpu.sp--;cpu.write(WRAP(addr, -1), cpu.x);}
 void PHY() {cpu.sp--;cpu.write(WRAP(addr, -1), cpu.y);}
 
 void PLA() {cpu.sp++; cpu.a = cpu.read(addr); SET_N(cpu.a);SET_Z(cpu.a);}
-void PLP() {cpu.sp++; cpu.flags.as_int = cpu.read(addr); cpu.flags.B = 0; cpu.flags.u = 1;}
+void PLP() {cpu.sp++; cpu.flags = cpu.read(addr); cpu.flags &= ~CPU_FLAG_B; cpu.flags |= CPU_FLAG_u;}
 void PLX() {cpu.sp++; cpu.x = cpu.read(addr); SET_N(cpu.x);SET_Z(cpu.x);}
 void PLY() {cpu.sp++; cpu.y = cpu.read(addr); SET_N(cpu.y);SET_Z(cpu.y);}
 void ROL() {
     if (is_value) value = cpu.a;
     else value = cpu.read(addr);
 
-    uint8_t old_c = cpu.flags.C;
-    cpu.flags.C = (value>>7) & 1;
-    value = value << 1 | old_c;
+    uint8_t carry = cpu.flags & CPU_FLAG_C ? 1 : 0;
+    set_flag((value>>7) & 1, CPU_FLAG_C);
+    value = value << 1 | carry;
 
     if (is_value) cpu.a = value;
     else cpu.write(addr, value);
@@ -423,9 +420,9 @@ void ROR() {
     if (is_value) value = cpu.a;
     else value = cpu.read(addr);
 
-    uint8_t old_c = cpu.flags.C;
-    cpu.flags.C = value & 1;
-    value = (value >> 1) | (old_c << 7);
+    uint8_t carry = cpu.flags & CPU_FLAG_C ? 1 : 0;
+    set_flag(value & 1, CPU_FLAG_C);
+    value = (value >> 1) | (carry << 7);
 
     if (is_value) cpu.a = value;
     else cpu.write(addr, value);
@@ -446,14 +443,14 @@ void RTI() {
 
 void SBC() {
     if (!is_value) value = cpu.read(addr);
-    uint16_t borrow = cpu.flags.C ? 0 : 1;
+    uint16_t borrow = cpu.flags & CPU_FLAG_C ? 0 : 1;
     uint16_t result = cpu.a - value - borrow;
 
 #ifndef Q6502_WDC65C02
     SET_N(result & 0xFF);
     SET_Z(result & 0xFF);
 #endif
-    if (cpu.flags.D) {
+    if (cpu.flags & CPU_FLAG_D) {
         int16_t low = (cpu.a & 0x0F) - (value & 0x0F) - borrow;
         borrow = low < 0 ? 1 : 0;
 #ifndef Q6502_WDC65C02
@@ -462,21 +459,21 @@ void SBC() {
         if (low < 0) low -= 0x06;
         if (hgh < 0) hgh -= 0x06;
 
-        cpu.flags.V = ((cpu.a ^ value) & 0x80) && ((cpu.a ^ result) & 0x80);
+        set_flag(((cpu.a ^ value) & 0x80) && ((cpu.a ^ result) & 0x80), CPU_FLAG_V);
         result = ((hgh & 0x0F) << 4) | (low & 0x0F);
 #else
         int16_t hgh = (cpu.a & 0xF0) - (value & 0xF0) - (borrow<<4);
 
         result = (hgh & 0xF0) | (low & 0xF);
-        cpu.flags.V = ((cpu.a ^ value) & 0x80) && ((cpu.a ^ result) & 0x80);
+        set_flag(((cpu.a ^ value) & 0x80) && ((cpu.a ^ result) & 0x80), CPU_FLAG_V);
 
         if (hgh < 0) result -= 0x60;
         if (low < 0) result -= 0x06;
 #endif
-        cpu.flags.C = hgh >= 0; // Special
+        set_flag(hgh >= 0, CPU_FLAG_C); // Special
     } else {
-        cpu.flags.C = result < 0x100; // Special
-        cpu.flags.V = ((cpu.a ^ value) & 0x80) && ((cpu.a ^ result) & 0x80);
+        set_flag(result < 0x100, CPU_FLAG_C); // Special
+        set_flag(((cpu.a ^ value) & 0x80) && ((cpu.a ^ result) & 0x80), CPU_FLAG_V);
     }
     cpu.a = result;
 #ifdef Q6502_WDC65C02
@@ -484,9 +481,14 @@ void SBC() {
 #endif
 }
 
-void SEC() {cpu.flags.C = 1;}
-void SED() {cpu.flags.D = 1;}
-void SEI() {cpu.flags.I = 1;}
+void SEC() {cpu.flags |= CPU_FLAG_C;}
+void SED() {cpu.flags |= CPU_FLAG_D;}
+void SEI() {cpu.flags |= CPU_FLAG_I;}
+void CLC() {cpu.flags &= ~CPU_FLAG_C;}
+void CLD() {cpu.flags &= ~CPU_FLAG_D;}
+void CLI() {cpu.flags &= ~CPU_FLAG_I;}
+void CLV() {cpu.flags &= ~CPU_FLAG_V;}
+
 void STA() {cpu.write(addr, cpu.a);}
 void STX() {cpu.write(addr, cpu.x);}
 void STY() {cpu.write(addr, cpu.y);}
@@ -656,8 +658,8 @@ void cpu_init(uint8_t (*read)(uint16_t addr), void (*write)(uint16_t addr, uint8
     cpu.a = 0;
     cpu.x = 0;
     cpu.y = 0;
-    cpu.flags.as_int = 0;
-    cpu.flags.u = 1;
+    cpu.flags = 0;
+    cpu.flags |= CPU_FLAG_u;
     cpu.error = Q6502_ERROR_OK;
 #ifdef Q6502_WDC65C02
     cpu.wai = 0;
@@ -680,7 +682,7 @@ void cpu_irq() {
 #ifdef Q6502_WDC65C02
     cpu.wai = 0;
 #endif
-    if (cpu.flags.I) {
+    if (cpu.flags & CPU_FLAG_I) {
         return;
     }
 
@@ -688,15 +690,12 @@ void cpu_irq() {
     cpu.write(0x100+WRAP(cpu.sp, +3), (cpu.pc >> 8));
     cpu.write(0x100+WRAP(cpu.sp, +2), cpu.pc & 0xFF);
 
-    uint8_t old_b = cpu.flags.B;
-    cpu.flags.B=0;
-    cpu.write(0x100+WRAP(cpu.sp, +1), cpu.flags.as_int);
-    cpu.flags.B = old_b;
+    cpu.write(0x100+WRAP(cpu.sp, +1), cpu.flags & ~CPU_FLAG_B);
 
-    cpu.flags.I = 1;
+    cpu.flags |= CPU_FLAG_I;
 
 #ifdef Q6502_WDC65C02
-    cpu.flags.D = 0;
+    cpu.flags &= ~CPU_FLAG_D;
 #endif
 
     cpu.pc = (cpu.read(0xFFFF) << 8) | cpu.read(0xFFFE);
@@ -711,15 +710,12 @@ void cpu_nmi() {
     cpu.write(0x100+WRAP(cpu.sp, +3), (cpu.pc >> 8));
     cpu.write(0x100+WRAP(cpu.sp, +2), cpu.pc & 0xFF);
 
-    uint8_t old_b = cpu.flags.B;
-    cpu.flags.B=0;
-    cpu.write(0x100+WRAP(cpu.sp, +1), cpu.flags.as_int);
-    cpu.flags.B = old_b;
+    cpu.write(0x100+WRAP(cpu.sp, +1), cpu.flags & ~CPU_FLAG_B);
 
-    cpu.flags.I = 1;
+    cpu.flags |= CPU_FLAG_I;
 
 #ifdef Q6502_WDC65C02
-    cpu.flags.D = 0;
+    cpu.flags &= ~CPU_FLAG_D;
 #endif
 
     cpu.pc = (cpu.read(0xFFFB) << 8) | cpu.read(0xFFFA);
